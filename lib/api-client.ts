@@ -1,6 +1,6 @@
 import axios, { type AxiosInstance, type AxiosError } from "axios"
 
-const API_URL = process.env.NEXT_PUBLIC_API_BASE_URL
+const API_URL = '/api-proxy' //#process.env.NEXT_PUBLIC_API_BASE_URL
 
 console.log("[API Client] API_URL:", API_URL)
 console.log("[API Client] process.env.NEXT_PUBLIC_API_BASE_URL:", process.env.NEXT_PUBLIC_API_BASE_URL)

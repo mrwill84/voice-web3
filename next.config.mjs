@@ -15,7 +15,7 @@ const nextConfig = {
     return [
       {
         source: '/api-proxy/:path*',
-        destination: `${process.env.API_TARGET_URL}/:path*`,
+        destination: `https://xkvwqhdfaegy.sealosgzg.site/:path*`,
       },
     ]
   },
