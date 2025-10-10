@@ -1,5 +1,5 @@
 # => Build container
-FROM node:21-alpine3.18 AS deps
+FROM node:21-slim AS deps
 
 WORKDIR /app
 
@@ -11,7 +11,7 @@ RUN npm cache clean --force && npm install --omit=dev
 
 
 # => Builder
-FROM node:21-alpine3.18 AS builder
+FROM node:21-slim AS builder
 
 WORKDIR /app
 
@@ -31,15 +31,15 @@ RUN npm run build
 
 
 # => Run container
-FROM node:21-alpine3.18 AS runner
+FROM node:21-slim AS runner
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 
 # 创建非 root 用户
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN groupadd --system --gid 1001 nodejs
+RUN useradd --system --uid 1001 -g nodejs nextjs
 
 # 复制必要的文件
 COPY --from=builder /app/next.config.mjs ./
