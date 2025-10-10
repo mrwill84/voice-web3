@@ -6,8 +6,8 @@ WORKDIR /app
 # 只复制依赖文件
 COPY package*.json ./
 
-# 安装依赖
-RUN npm ci --only=production
+# 清理缓存并安装依赖
+RUN npm cache clean --force && npm install --omit=dev
 
 
 # => Builder
@@ -18,8 +18,8 @@ WORKDIR /app
 # 复制依赖文件
 COPY package*.json ./
 
-# 安装所有依赖（包括 devDependencies）
-RUN npm ci
+# 清理缓存并安装所有依赖
+RUN npm cache clean --force && npm install
 
 # 复制源码
 COPY . .
