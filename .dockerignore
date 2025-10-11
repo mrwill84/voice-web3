@@ -2,6 +2,7 @@
 node_modules
 npm-debug.log*
 pnpm-debug.log*
+pnpm-lock.yaml
 
 # 构建产物
 .next
