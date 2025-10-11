@@ -17,7 +17,7 @@ WORKDIR /app
 
 # 复制依赖文件
 COPY package*.json ./
-
+RUN npm i -D @swc/cli @swc/core
 # 清理缓存并安装所有依赖
 RUN npm cache clean --force && npm install
 
