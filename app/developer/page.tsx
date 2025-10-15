@@ -67,12 +67,18 @@ const EditIcon = ({ className }: { className?: string }) => (
 
 interface DeveloperTool {
   id: string
+  tool_id: string
   name: string
   description: string
   type: string
   status: string
-  is_public: boolean
-  created_at: string
+  is_public?: boolean
+  endpoint?: {
+    platform: string
+    api_key?: string
+    app_config?: any
+  }
+  created_at?: string
   updated_at?: string
 }
 
@@ -84,10 +90,10 @@ export default function DeveloperPage() {
     name: "",
     description: "",
     type: "http",
-    endpoint_url: "",
+    platform: "dify", // 默认选择Dify平台
     api_key: "",
-    user_input_var: "query",
-    documentation: "",
+    bot_id: "", // Coze平台需要
+    tags: "",
   })
   const [creating, setCreating] = useState(false)
   const [testResult, setTestResult] = useState("")
@@ -117,13 +123,13 @@ export default function DeveloperPage() {
   const loadTools = async () => {
     setLoading(true)
     try {
-      const data = await apiClient.getDeveloperServices({ page: 1, page_size: 50 })
-      setTools(data.tools || [])
+      const data = await apiClient.getIntegrations({ page: 1, page_size: 50 })
+      setTools(data.items || [])
     } catch (error: any) {
-      console.error("加载开发者工具失败:", error)
+      console.error("加载集成列表失败:", error)
       toast({
         title: "加载失败",
-        description: error.message || "获取工具列表失败",
+        description: error.message || "获取集成列表失败",
         variant: "destructive",
       })
     } finally {
@@ -132,10 +138,10 @@ export default function DeveloperPage() {
   }
 
   const handleTestService = async () => {
-    if (!formData.endpoint_url.trim()) {
+    if (!formData.name.trim() || !formData.api_key.trim()) {
       toast({
         title: "验证失败",
-        description: "请输入端点URL",
+        description: "请填写集成名称和API Key",
         variant: "destructive",
       })
       return
@@ -144,27 +150,27 @@ export default function DeveloperPage() {
     setTesting(true)
     setTestResult("正在测试...")
 
-    try {
-      const toolConfig = {
-        type: formData.type,
-        endpoint_url: formData.endpoint_url.trim(),
+    const integrationConfig = {
+      name: formData.name.trim(),
+      type: "http",
+      description: formData.description.trim(),
+      endpoint: {
+        platform: formData.platform,
         api_key: formData.api_key.trim(),
-        user_input_var: formData.user_input_var || "query",
+        ...(formData.platform === "coze" && { app_config: { bot_id: formData.bot_id.trim() } })
       }
+    }
 
-      const testData = { [formData.user_input_var || "query"]: "测试消息" }
+    const testData = { query: "你好，请介绍一下你的功能" }
 
-      const response = await apiClient.testUnsavedDeveloperTool({
-        tool_config: toolConfig,
-        test_data: testData,
-        timeout: 30,
-      })
+    try {
+      const response = await apiClient.testUnsavedIntegration(integrationConfig, testData)
 
-      if (response.status === 200 && response.data.success) {
+      if (response.data.success) {
         setTestResult(JSON.stringify(response.data.result, null, 2))
         toast({
           title: "测试成功",
-          description: "服务响应正常",
+          description: "集成响应正常",
         })
       } else {
         setTestResult(JSON.stringify(response.data, null, 2))
@@ -175,72 +181,122 @@ export default function DeveloperPage() {
         })
       }
     } catch (error: any) {
-      console.error("测试服务错误:", error)
-      setTestResult(`测试失败: ${error.message || "未知错误"}`)
+      setTestResult(`测试失败: ${error.message}`)
       toast({
-        title: "测试错误",
-        description: error.message || "测试服务时发生错误",
+        title: "测试失败",
+        description: error.message || "测试集成时发生错误",
         variant: "destructive",
       })
-    } finally {
-      setTesting(false)
     }
+
+    setTesting(false)
   }
 
-  const handleCreateService = async () => {
-    if (!formData.name.trim() || !formData.endpoint_url.trim()) {
+  const handleCreateIntegration = async () => {
+    if (!formData.name.trim() || !formData.description.trim() || !formData.api_key.trim()) {
       toast({
         title: "验证失败",
-        description: "请填写服务名称和端点URL",
+        description: "请填写集成名称、描述和API Key",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (formData.platform === "coze" && !formData.bot_id.trim()) {
+      toast({
+        title: "验证失败",
+        description: "Coze平台需要提供Bot ID",
         variant: "destructive",
       })
       return
     }
 
     setCreating(true)
-
     try {
-      const serviceData = {
+      const integrationData = {
         name: formData.name.trim(),
+        type: "http",
         description: formData.description.trim(),
-        type: formData.type,
-        config: {
-          endpoint_url: formData.endpoint_url.trim(),
+        endpoint: {
+          platform: formData.platform,
           api_key: formData.api_key.trim(),
-          user_input_var: formData.user_input_var || "query",
-          documentation: formData.documentation.trim(),
-        },
+          ...(formData.platform === "coze" && { app_config: { bot_id: formData.bot_id.trim() } })
+        }
       }
 
-      const response = await apiClient.createDeveloperService(serviceData)
+      const response = await apiClient.createIntegration(integrationData)
+      
+      toast({
+        title: "创建成功",
+        description: `集成 "${formData.name}" 已成功创建！Tool ID: ${response.data.tool_id}`,
+      })
 
-      if (response.status === 200 || response.status === 201) {
-        toast({
-          title: "创建成功",
-          description: "服务已成功创建",
-        })
-        setShowCreateForm(false)
-        setFormData({
-          name: "",
-          description: "",
-          type: "http",
-          endpoint_url: "",
-          api_key: "",
-          user_input_var: "query",
-          documentation: "",
-        })
-        setTestResult("")
-        loadTools()
+      // 重置表单
+      setFormData({
+        name: "",
+        description: "",
+        type: "http",
+        platform: "dify",
+        api_key: "",
+        bot_id: "",
+        tags: "",
+      })
+      setShowCreateForm(false)
+      setTestResult("")
+      loadTools()
+
+      // 可选：立即测试集成
+      const shouldTest = confirm('是否立即测试该集成？')
+      if (shouldTest && response.data.id) {
+        await testIntegration(response.data.id)
       }
     } catch (error: any) {
-      console.error("创建服务错误:", error)
+      console.error("创建集成失败:", error)
+      let errorMessage = "创建集成时发生错误"
+      
+      if (error.response?.status === 422) {
+        errorMessage = "参数错误: " + (error.response.data.detail || "API Key格式错误")
+      } else if (error.response?.status === 400) {
+        errorMessage = "连接失败: " + (error.response.data.detail || "连通性测试失败")
+      } else if (error.message) {
+        errorMessage = error.message
+      }
+      
       toast({
         title: "创建失败",
-        description: error.message || "创建服务时发生错误",
+        description: errorMessage,
         variant: "destructive",
       })
     } finally {
       setCreating(false)
+    }
+  }
+
+  const testIntegration = async (integrationId: string) => {
+    const testQuery = prompt('请输入测试查询:', '你好，请介绍一下你的功能')
+    if (!testQuery) return
+
+    try {
+      const response = await apiClient.testIntegration(integrationId, { query: testQuery })
+      
+      if (response.data.success) {
+        toast({
+          title: "测试成功",
+          description: `响应: ${response.data.result}\n耗时: ${response.data.execution_time}秒`,
+        })
+      } else {
+        toast({
+          title: "测试失败",
+          description: response.data.error || "未知错误",
+          variant: "destructive",
+        })
+      }
+    } catch (error: any) {
+      toast({
+        title: "测试失败",
+        description: error.message || "测试请求失败",
+        variant: "destructive",
+      })
     }
   }
 
@@ -288,11 +344,11 @@ export default function DeveloperPage() {
                 <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center">
                   <ZapIcon className="w-4 h-4 text-primary-foreground" />
                 </div>
-                <h1 className="text-lg font-bold">开发者控制台</h1>
+                <h1 className="text-lg font-bold">API集成管理</h1>
               </div>
               <Button onClick={() => setShowCreateForm(!showCreateForm)} size="sm">
                 <PlusIcon className="w-4 h-4 mr-2" />
-                创建服务
+                创建集成
               </Button>
             </div>
           </div>
@@ -302,85 +358,87 @@ export default function DeveloperPage() {
           {showCreateForm && (
             <Card className="card-gradient-blue">
               <CardHeader>
-                <CardTitle>创建新服务</CardTitle>
-                <CardDescription>配置并测试您的自定义服务</CardDescription>
+                <CardTitle>创建API集成</CardTitle>
+                <CardDescription>配置并测试您的Dify或Coze API集成</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="name">服务名称</Label>
+                    <Label htmlFor="name">集成名称</Label>
                     <Input
                       id="name"
-                      placeholder="输入服务名称"
+                      placeholder="例如：客服助手"
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="type">平台类型</Label>
-                    <Select value={formData.type} onValueChange={(value) => setFormData({ ...formData, type: value })}>
+                    <Label htmlFor="platform">平台类型</Label>
+                    <Select value={formData.platform} onValueChange={(value) => setFormData({ ...formData, platform: value, bot_id: "" })}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="http">HTTP</SelectItem>
                         <SelectItem value="dify">Dify</SelectItem>
                         <SelectItem value="coze">Coze</SelectItem>
-                        <SelectItem value="mcp">MCP</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="description">服务描述</Label>
+                  <Label htmlFor="description">集成描述</Label>
                   <Textarea
                     id="description"
-                    placeholder="输入服务描述"
+                    placeholder="描述这个集成的用途和功能"
                     value={formData.description}
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="endpoint_url">端点URL</Label>
+                  <Label htmlFor="api_key">
+                    {formData.platform === "dify" ? "Dify API Key" : "Coze API Key"}
+                  </Label>
                   <Input
-                    id="endpoint_url"
-                    placeholder="https://api.example.com/endpoint"
-                    value={formData.endpoint_url}
-                    onChange={(e) => setFormData({ ...formData, endpoint_url: e.target.value })}
+                    id="api_key"
+                    type="password"
+                    placeholder={formData.platform === "dify" ? "app-xxxxxxxxxxxxxxxx" : "pat_xxxxxxxxxxxxxxxx"}
+                    value={formData.api_key}
+                    onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
                   />
+                  <div className="text-sm text-muted-foreground">
+                    {formData.platform === "dify" ? (
+                      <>Dify API Key 格式：以 "app-" 开头</>
+                    ) : (
+                      <>Coze API Key 格式：以 "pat_" 开头</>
+                    )}
+                  </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2">
+                {formData.platform === "coze" && (
                   <div className="space-y-2">
-                    <Label htmlFor="api_key">API密钥</Label>
+                    <Label htmlFor="bot_id">Bot ID</Label>
                     <Input
-                      id="api_key"
-                      type="password"
-                      placeholder="输入API密钥"
-                      value={formData.api_key}
-                      onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
+                      id="bot_id"
+                      placeholder="例如：7342866812345"
+                      value={formData.bot_id}
+                      onChange={(e) => setFormData({ ...formData, bot_id: e.target.value })}
                     />
+                    <div className="text-sm text-muted-foreground">
+                      Coze平台需要提供Bot ID
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="user_input_var">用户输入变量名</Label>
-                    <Input
-                      id="user_input_var"
-                      placeholder="query"
-                      value={formData.user_input_var}
-                      onChange={(e) => setFormData({ ...formData, user_input_var: e.target.value })}
-                    />
-                  </div>
-                </div>
+                )}
+
 
                 <div className="space-y-2">
-                  <Label htmlFor="documentation">文档说明</Label>
-                  <Textarea
-                    id="documentation"
-                    placeholder="输入服务文档说明"
-                    value={formData.documentation}
-                    onChange={(e) => setFormData({ ...formData, documentation: e.target.value })}
+                  <Label htmlFor="tags">标签（用逗号分隔，可选）</Label>
+                  <Input
+                    id="tags"
+                    placeholder="developer, http, translation, ai"
+                    value={formData.tags}
+                    onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
                   />
                 </div>
 
@@ -401,11 +459,11 @@ export default function DeveloperPage() {
                     className="flex-1 bg-transparent"
                   >
                     {testing ? <Loader2Icon className="w-4 h-4 mr-2 animate-spin" /> : null}
-                    测试服务
+                    测试集成
                   </Button>
-                  <Button onClick={handleCreateService} disabled={creating} className="flex-1">
+                  <Button onClick={handleCreateIntegration} disabled={creating || !formData.name || !formData.description || !formData.api_key || (formData.platform === "coze" && !formData.bot_id)} className="flex-1">
                     {creating ? <Loader2Icon className="w-4 h-4 mr-2 animate-spin" /> : null}
-                    创建服务
+                    创建集成
                   </Button>
                 </div>
               </CardContent>
@@ -421,7 +479,7 @@ export default function DeveloperPage() {
               </div>
             ) : tools.length === 0 ? (
               <Card className="p-8 text-center card-gradient-blue">
-                <p className="text-muted-foreground">暂无服务，点击上方按钮创建您的第一个服务</p>
+                <p className="text-muted-foreground">暂无集成，点击上方按钮创建您的第一个API集成</p>
               </Card>
             ) : (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -433,12 +491,17 @@ export default function DeveloperPage() {
                         <Badge variant={tool.status === "active" ? "default" : "secondary"}>{tool.status}</Badge>
                       </div>
                       <CardDescription className="line-clamp-2">{tool.description}</CardDescription>
+                      {tool.tool_id && (
+                        <div className="text-xs text-muted-foreground font-mono">
+                          Tool ID: {tool.tool_id}
+                        </div>
+                      )}
                     </CardHeader>
                     <CardContent>
                       <div className="flex items-center justify-between">
                         <div className="flex gap-2">
                           <Badge variant="outline" className="text-xs">
-                            {tool.type}
+                            {tool.endpoint?.platform || tool.type}
                           </Badge>
                           {tool.is_public && (
                             <Badge variant="outline" className="text-xs">
@@ -450,7 +513,16 @@ export default function DeveloperPage() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => handleDeleteTool(tool.id)}
+                            onClick={() => testIntegration(tool.tool_id || tool.id)}
+                            className="h-8 w-8 p-0"
+                            title="测试集成"
+                          >
+                            <EditIcon className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteTool(tool.tool_id || tool.id)}
                             className="h-8 w-8 p-0"
                           >
                             <TrashIcon className="w-4 h-4 text-destructive" />

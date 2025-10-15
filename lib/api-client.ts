@@ -157,11 +157,27 @@ export const apiClient = {
   // Intent recognition and execution APIs
   async interpret(transcript: string, sessionId?: string, userId?: number) {
     try {
-      const { replaceContactsInText } = await import("./address-book")
+      const { replaceContactsInText, getContacts } = await import("./address-book")
       const processedTranscript = replaceContactsInText(transcript)
+      const contacts = getContacts()
+
+      // 构建包含地址簿信息的查询
+      let enhancedQuery = processedTranscript
+      if (Object.keys(contacts).length > 0) {
+        const addressBookInfo = Object.entries(contacts)
+          .map(([name, address]) => `${name}: ${address}`)
+          .join(", ")
+        
+        enhancedQuery = `${processedTranscript}
+
+可用地址簿信息：
+${addressBookInfo}
+
+注意：你可以使用上述地址簿中的联系人名称来引用对应的地址，这样用户就不需要手动输入完整的地址。`
+      }
 
       const requestData: any = {
-        query: processedTranscript,
+        query: enhancedQuery,
         session_id: sessionId || null,
       }
 
@@ -189,22 +205,18 @@ export const apiClient = {
     }
   },
 
-  async execute(toolId: string, params: any, sessionId?: string, userId?: number) {
+  async confirm(sessionId: string, userInput: string, userId?: number) {
     try {
-      if (!toolId) {
-        throw new Error("工具ID不能为空")
+      if (!sessionId) {
+        throw new Error("会话ID不能为空")
       }
-      if (!params || typeof params !== "object") {
-        throw new Error("参数必须是一个对象")
+      if (!userInput) {
+        throw new Error("用户输入不能为空")
       }
-
-      const { replaceContactsInParams } = await import("./address-book")
-      const processedParams = replaceContactsInParams(params)
 
       const requestData: any = {
-        tool_id: toolId,
-        params: processedParams,
         session_id: sessionId,
+        user_input: userInput,
       }
 
       const userIdNum = userId != null ? Number(userId) : undefined
@@ -212,12 +224,13 @@ export const apiClient = {
         requestData.user_id = userIdNum
       }
 
-      const response = await api.post("/api/v1/execute", requestData)
+      const response = await api.post("/api/v1/intent/confirm", requestData)
 
       return {
         success: response.data.success !== false,
         sessionId: response.data.session_id || sessionId,
         data: response.data.data || response.data.result || response.data,
+        content: response.data.content,
         error: response.data.error,
       }
     } catch (error: any) {
@@ -275,21 +288,84 @@ export const apiClient = {
     name: string
     description: string
     type: string
-    config: any
+    provider?: string
+    isDeveloperTool?: boolean
+    endpoint: {
+      url: string
+      method: string
+      platform_type: string
+      api_key?: string
+    }
+    request_schema?: any
+    response_schema?: any
+    tags?: string[]
     is_public?: boolean
     status?: string
   }) {
+    const response = await api.post("/api/v1/dev/tools", serviceData)
+    return response
+  },
+
+  // New integration APIs for Dify/Coze
+  async createIntegration(integrationData: {
+    name: string
+    type: string
+    description: string
+    endpoint: {
+      platform: string
+      api_key: string
+      app_config?: any
+    }
+  }) {
+    const response = await api.post("/api/v1/dev/integrations", integrationData)
+    return response
+  },
+
+  async getIntegrations(params?: {
+    page?: number
+    page_size?: number
+    status?: string
+    search?: string
+  }) {
     try {
-      const response = await api.post("/api/v1/dev/tools", serviceData)
+      const response = await api.get("/api/v1/dev/integrations", { params })
+      return {
+        items: response.data.tools || response.data.items || [],
+        total: response.data.total || 0,
+        page: response.data.page || params?.page || 1,
+        size: response.data.page_size || params?.page_size || 20,
+      }
+    } catch (error: any) {
+      throw new Error(error.message || "获取集成列表失败")
+    }
+  },
+
+  async testIntegration(integrationId: string, testData: any) {
+    try {
+      const response = await api.post(`/api/v1/dev/integrations/${integrationId}/test`, {
+        test_data: testData
+      })
       return response
     } catch (error: any) {
-      throw new Error(error.message || "创建服务失败")
+      throw new Error(error.message || "测试集成失败")
+    }
+  },
+
+  async testUnsavedIntegration(integrationConfig: any, testData: any) {
+    try {
+      const response = await api.post("/api/v1/dev/integrations/test", {
+        integration_config: integrationConfig,
+        test_data: testData
+      })
+      return response
+    } catch (error: any) {
+      throw new Error(error.message || "测试集成失败")
     }
   },
 
   async updateDeveloperService(toolId: string, updateData: any) {
     try {
-      const response = await api.put(`/api/v1/dev/tools/${toolId}`, updateData)
+      const response = await api.put(`/api/v1/dev/tools/${toolId}/`, updateData)
       return response
     } catch (error: any) {
       throw new Error(error.message || "更新服务失败")
@@ -298,7 +374,7 @@ export const apiClient = {
 
   async deleteDeveloperService(toolId: string) {
     try {
-      const response = await api.delete(`/api/v1/dev/tools/${toolId}`)
+      const response = await api.delete(`/api/v1/dev/tools/${toolId}/`)
       return response
     } catch (error: any) {
       throw new Error(error.message || "删除服务失败")
@@ -307,7 +383,7 @@ export const apiClient = {
 
   async testDeveloperTool(toolId: string, testData: any, timeout?: number) {
     try {
-      const response = await api.post(`/api/v1/dev/tools/${toolId}/test`, {
+      const response = await api.post(`/api/v1/dev/tools/${toolId}/test/`, {
         test_data: testData,
         timeout: timeout || 30,
       })

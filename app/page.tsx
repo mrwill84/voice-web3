@@ -98,6 +98,8 @@ interface ChatMessage {
   pendingAction?: {
     toolId: string
     params: any
+    confirmationText?: string
+    sessionId?: string
   }
   isConfirmed?: boolean
   logs?: string[]
@@ -219,6 +221,8 @@ export default function HomePage() {
             pendingAction: {
               toolId,
               params,
+              confirmationText: result.confirmationText,
+              sessionId: result.sessionId,
             },
           }
           setChatMessages((prev) => [...prev, confirmationMessage])
@@ -240,7 +244,14 @@ export default function HomePage() {
           }
           setChatMessages((prev) => [...prev, executionMessage])
 
-          await executeToolAndHandleResult(result.toolId || result.action || "", result.params || {}, executionMessageId)
+          // 根据业务场景测试用例文档，这里应该显示确认信息
+          // 然后用户确认后调用 confirm API
+          const userConfirm = confirm(result.confirmationText || "是否执行此操作？")
+          if (userConfirm) {
+            await executeToolAndHandleResult(result.sessionId || "", "是的", executionMessageId)
+          } else {
+            await executeToolAndHandleResult(result.sessionId || "", "取消", executionMessageId)
+          }
         } else {
           const message = result.content || result.tts_message || result.message || "已收到您的消息"
           const assistantMessage: ChatMessage = {
@@ -273,19 +284,19 @@ export default function HomePage() {
   )
 
   const executeToolAndHandleResult = useCallback(
-    async (toolId: string, params: any, executionMessageId: string) => {
+    async (sessionId: string, userInput: string, executionMessageId: string) => {
       try {
-        console.log("[] Executing tool:", toolId, "with params:", params)
+        console.log("[] Confirming execution for session:", sessionId, "with input:", userInput)
 
-        const execResult = await apiClient.execute(toolId, params, sessionIdRef.current, user?.id)
+        const confirmResult = await apiClient.confirm(sessionId, userInput, user?.id)
 
-        console.log("[] Execute API Result:", execResult)
+        console.log("[] Confirm API Result:", confirmResult)
 
-        if (execResult.sessionId && execResult.sessionId !== sessionIdRef.current) {
-          sessionIdRef.current = execResult.sessionId
+        if (confirmResult.sessionId && confirmResult.sessionId !== sessionIdRef.current) {
+          sessionIdRef.current = confirmResult.sessionId
         }
 
-        if (execResult.success && execResult.data) {
+        if (confirmResult.success && (confirmResult.data || confirmResult.content)) {
           // 更新执行消息状态为完成
           setChatMessages((prev) =>
             prev.map((m) =>
@@ -296,14 +307,21 @@ export default function HomePage() {
           )
 
           let textToSpeak
-          if (execResult.data.tts_message) {
-            textToSpeak = execResult.data.tts_message
-          } else if (execResult.data.summary) {
-            textToSpeak = execResult.data.summary
-          } else if (typeof execResult.data === "string") {
-            textToSpeak = execResult.data
-          } else if (execResult.data.result || execResult.data.message) {
-            textToSpeak = execResult.data.result || execResult.data.message
+          // 优先使用 content 字段（API 直接返回的内容）
+          if (confirmResult.content) {
+            textToSpeak = confirmResult.content
+          } else if (confirmResult.data) {
+            if (confirmResult.data.tts_message) {
+              textToSpeak = confirmResult.data.tts_message
+            } else if (confirmResult.data.summary) {
+              textToSpeak = confirmResult.data.summary
+            } else if (typeof confirmResult.data === "string") {
+              textToSpeak = confirmResult.data
+            } else if (confirmResult.data.result || confirmResult.data.message) {
+              textToSpeak = confirmResult.data.result || confirmResult.data.message
+            } else {
+              textToSpeak = "操作成功"
+            }
           } else {
             textToSpeak = "操作成功"
           }
@@ -320,7 +338,7 @@ export default function HomePage() {
           setIsExecuting(false)
           handleExecutionComplete()
         } else {
-          const message = execResult.error?.message || "执行失败"
+          const message = confirmResult.error?.message || "确认失败"
           
           // 更新执行消息状态为错误
           setChatMessages((prev) =>
@@ -505,11 +523,22 @@ export default function HomePage() {
                                   }
                                   setChatMessages((prev) => [...prev, executionMessage])
                                   
-                                  await executeToolAndHandleResult(
-                                    message.pendingAction!.toolId,
-                                    message.pendingAction!.params,
-                                    executionMessageId
-                                  )
+                                  // 根据业务场景测试用例文档，这里应该显示确认信息
+                                  // 然后用户确认后调用 confirm API
+                                  const userConfirm = confirm(message.pendingAction!.confirmationText || "是否执行此操作？")
+                                  if (userConfirm) {
+                                    await executeToolAndHandleResult(
+                                      message.pendingAction!.sessionId || "",
+                                      "是的",
+                                      executionMessageId
+                                    )
+                                  } else {
+                                    await executeToolAndHandleResult(
+                                      message.pendingAction!.sessionId || "",
+                                      "取消",
+                                      executionMessageId
+                                    )
+                                  }
                                 }}
                                 className="flex-1 text-xs h-7 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white"
                               >

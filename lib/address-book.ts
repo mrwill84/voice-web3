@@ -5,7 +5,7 @@ interface Contact {
   address: string
 }
 
-function getContacts(): Record<string, string> {
+export function getContacts(): Record<string, string> {
   if (typeof window === "undefined") {
     return {}
   }
