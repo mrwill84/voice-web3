@@ -44,9 +44,17 @@ interface VoiceBottomSheetProps {
   isOpen: boolean
   onClose: () => void
   onCommandDetected: (command: string) => void
+  isConfirmationMode?: boolean
+  confirmationText?: string
 }
 
-export function VoiceBottomSheet({ isOpen, onClose, onCommandDetected }: VoiceBottomSheetProps) {
+export function VoiceBottomSheet({ 
+  isOpen, 
+  onClose, 
+  onCommandDetected, 
+  isConfirmationMode = false, 
+  confirmationText 
+}: VoiceBottomSheetProps) {
   const [isListening, setIsListening] = useState(false)
   const [textInput, setTextInput] = useState("")
   const [transcript, setTranscript] = useState("")
@@ -121,16 +129,34 @@ export function VoiceBottomSheet({ isOpen, onClose, onCommandDetected }: VoiceBo
           <div className="p-6 space-y-6">
             {/* Header */}
             <div className="flex items-center justify-between">
-              <h2 className="text-xl font-bold text-balance">语音交互</h2>
+              <h2 className="text-xl font-bold text-balance">
+                {isConfirmationMode ? "语音确认" : "语音交互"}
+              </h2>
               <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0">
                 <XIcon className="w-4 h-4" />
               </Button>
             </div>
 
+            {/* Confirmation Mode Content */}
+            {isConfirmationMode && confirmationText && (
+              <div className="bg-muted/50 rounded-lg p-4 space-y-2">
+                <p className="text-sm font-medium text-foreground">确认操作：</p>
+                <p className="text-sm text-muted-foreground">{confirmationText}</p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  请说"确认"、"是的"或"取消"、"不"
+                </p>
+              </div>
+            )}
+
             {/* Voice Section */}
             <div className="space-y-4">
               <div className="text-center space-y-4">
-                <p className="text-sm text-muted-foreground">点击麦克风开始语音交互</p>
+                <p className="text-sm text-muted-foreground">
+                  {isConfirmationMode 
+                    ? "点击麦克风进行语音确认" 
+                    : "点击麦克风开始语音交互"
+                  }
+                </p>
 
                 <div className="flex justify-center">
                   <Button

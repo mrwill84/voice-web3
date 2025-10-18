@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/auth-context"
 import { apiClient } from "@/lib/api-client"
 import { getSessionId } from "@/lib/session"
 import { useToast } from "@/hooks/use-toast"
+import { useTTS } from "@/hooks/use-tts"
 
 const MicIcon = ({ className }: { className?: string }) => (
   <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -69,6 +70,29 @@ const UserIcon = ({ className }: { className?: string }) => (
   </svg>
 )
 
+const VolumeIcon = ({ className }: { className?: string }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 14.142M6.343 6.343a1 1 0 011.414 0L9 7.586l1.243-1.243a1 1 0 011.414 1.414L10.414 9l1.243 1.243a1 1 0 01-1.414 1.414L9 10.414l-1.243 1.243a1 1 0 01-1.414-1.414L7.586 9 6.343 7.757a1 1 0 010-1.414z"
+    />
+  </svg>
+)
+
+const VolumeXIcon = ({ className }: { className?: string }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
+    />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+  </svg>
+)
+
 const Loader2Icon = ({ className }: { className?: string }) => (
   <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path
@@ -117,9 +141,16 @@ export default function HomePage() {
   const [hasShownVoiceSheet, setHasShownVoiceSheet] = useState(false)
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const [isConfirmationMode, setIsConfirmationMode] = useState(false)
+  const [pendingConfirmation, setPendingConfirmation] = useState<{
+    messageId: string
+    sessionId: string
+    confirmationText: string
+  } | null>(null)
 
   const { user, isAuthenticated } = useAuth()
   const { toast } = useToast()
+  const { speak, stop, isPlaying, isSupported } = useTTS()
   const sessionIdRef = useRef<string>(getSessionId())
   const [isProcessing, setIsProcessing] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
@@ -167,8 +198,87 @@ export default function HomePage() {
     setIsVoiceSheetOpen(true)
   }
 
+  const handleConfirmationCommand = useCallback(
+    async (command: string) => {
+      if (!pendingConfirmation) return
+
+      // 解析语音命令
+      const lowerCommand = command.toLowerCase().trim()
+      let isConfirm = false
+
+      // 检查确认词汇
+      if (lowerCommand.includes('确认') || lowerCommand.includes('是的') || 
+          lowerCommand.includes('好的') || lowerCommand.includes('同意') ||
+          lowerCommand.includes('y') || lowerCommand.includes('yes') ||
+          lowerCommand.includes('ok') || lowerCommand.includes('确定')) {
+        isConfirm = true
+      } else if (lowerCommand.includes('取消') || lowerCommand.includes('不') ||
+                 lowerCommand.includes('拒绝') || lowerCommand.includes('n') ||
+                 lowerCommand.includes('no') || lowerCommand.includes('stop')) {
+        isConfirm = false
+      } else {
+        // 如果无法识别，显示提示
+        toast({
+          title: "请说确认或取消",
+          description: "请说'确认'、'是的'或'取消'、'不'",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // 添加用户语音输入消息
+      const userMessage: ChatMessage = {
+        id: `user-voice-${Date.now()}`,
+        type: "user",
+        content: command,
+        timestamp: new Date(),
+      }
+      setChatMessages((prev) => [...prev, userMessage])
+
+      // 标记确认消息为已确认
+      setChatMessages((prev) => 
+        prev.map(m => 
+          m.id === pendingConfirmation.messageId 
+            ? { ...m, isConfirmed: true }
+            : m
+        )
+      )
+
+      // 创建执行消息
+      const executionMessageId = `execution-${Date.now()}`
+      const executionMessage: ChatMessage = {
+        id: executionMessageId,
+        type: "execution",
+        content: pendingConfirmation.confirmationText,
+        timestamp: new Date(),
+        executionStatus: "executing",
+        logs: [],
+      }
+      setChatMessages((prev) => [...prev, executionMessage])
+
+      // 执行确认或取消
+      const userInput = isConfirm ? "是的" : "取消"
+      await executeToolAndHandleResult(
+        pendingConfirmation.sessionId,
+        userInput,
+        executionMessageId
+      )
+
+      // 重置确认状态
+      setIsConfirmationMode(false)
+      setPendingConfirmation(null)
+      setIsVoiceSheetOpen(false)
+    },
+    [pendingConfirmation, toast],
+  )
+
   const handleCommandWithBackend = useCallback(
     async (command: string) => {
+      // 如果是确认模式，处理确认命令
+      if (isConfirmationMode && pendingConfirmation) {
+        await handleConfirmationCommand(command)
+        return
+      }
       if (!isAuthenticated) {
         toast({
           title: "需要登录",
@@ -212,9 +322,10 @@ export default function HomePage() {
           }
           
           const confirmMsg = result.confirmationText
+          const confirmationMessageId = `confirmation-${Date.now()}`
 
           const confirmationMessage: ChatMessage = {
-            id: `confirmation-${Date.now()}`,
+            id: confirmationMessageId,
             type: "confirmation",
             content: confirmMsg,
             timestamp: new Date(),
@@ -226,6 +337,22 @@ export default function HomePage() {
             },
           }
           setChatMessages((prev) => [...prev, confirmationMessage])
+          
+          // TTS播报确认文本
+          if (isSupported) {
+            speak(confirmMsg).catch(error => {
+              console.warn('TTS播报确认文本失败:', error)
+            })
+          }
+          
+          // 设置确认模式并打开语音界面
+          setIsConfirmationMode(true)
+          setPendingConfirmation({
+            messageId: confirmationMessageId,
+            sessionId: result.sessionId || "",
+            confirmationText: result.confirmationText,
+          })
+          setIsVoiceSheetOpen(true)
         } else if (result.toolId || result.action) {
           setExecutingCommand(command)
           setExecutionStatus("executing")
@@ -261,6 +388,13 @@ export default function HomePage() {
             timestamp: new Date(),
           }
           setChatMessages((prev) => [...prev, assistantMessage])
+          
+          // TTS播报回答
+          if (isSupported) {
+            speak(message).catch(error => {
+              console.warn('TTS播报失败:', error)
+            })
+          }
         }
       } catch (error: any) {
         console.error("[] Interpret API call failed:", error)
@@ -276,6 +410,13 @@ export default function HomePage() {
           timestamp: new Date(),
         }
         setChatMessages((prev) => [...prev, errorMessage])
+        
+        // TTS播报错误信息
+        if (isSupported) {
+          speak(`错误: ${error.message || "理解指令时出错"}`).catch(ttsError => {
+            console.warn('TTS播报失败:', ttsError)
+          })
+        }
       } finally {
         setIsProcessing(false)
       }
@@ -334,6 +475,13 @@ export default function HomePage() {
           }
           setChatMessages((prev) => [...prev, assistantMessage])
 
+          // TTS播报执行结果
+          if (isSupported) {
+            speak(textToSpeak).catch(error => {
+              console.warn('TTS播报失败:', error)
+            })
+          }
+
           setExecutionStatus("completed")
           setIsExecuting(false)
           handleExecutionComplete()
@@ -359,6 +507,13 @@ export default function HomePage() {
             timestamp: new Date(),
           }
           setChatMessages((prev) => [...prev, errorMessage])
+          
+          // TTS播报错误信息
+          if (isSupported) {
+            speak(`执行失败: ${message}`).catch(error => {
+              console.warn('TTS播报失败:', error)
+            })
+          }
         }
       } catch (error: any) {
         console.error("[] Execute API call failed:", error)
@@ -382,6 +537,13 @@ export default function HomePage() {
           timestamp: new Date(),
         }
         setChatMessages((prev) => [...prev, errorMessage])
+        
+        // TTS播报错误信息
+        if (isSupported) {
+          speak(`执行错误: ${error.message || "执行操作时出错"}`).catch(ttsError => {
+            console.warn('TTS播报失败:', ttsError)
+          })
+        }
       }
     },
     [user],
@@ -394,6 +556,12 @@ export default function HomePage() {
   const handleVoiceSheetClose = () => {
     setIsVoiceSheetOpen(false)
     setHasShownVoiceSheet(true)
+    
+    // 如果是确认模式，重置确认状态
+    if (isConfirmationMode) {
+      setIsConfirmationMode(false)
+      setPendingConfirmation(null)
+    }
   }
 
   useEffect(() => {
@@ -418,6 +586,47 @@ export default function HomePage() {
                 <ActivityIcon className="w-3 h-3 mr-1" />
                 在线
               </Badge>
+              {!isSupported && (
+                <Badge variant="outline" className="text-xs">
+                  TTS不支持
+                </Badge>
+              )}
+              {isSupported && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="w-8 h-8 rounded-full"
+                  onClick={() => {
+                    if (isPlaying) {
+                      stop()
+                    } else {
+                      // 播报最后一条助手消息，如果没有则播报测试文本
+                      const lastAssistantMessage = chatMessages
+                        .filter(msg => msg.type === "assistant")
+                        .pop()
+                      
+                      const textToSpeak = lastAssistantMessage?.content || "TTS测试，你好世界"
+                      console.log('[TTS] 准备播报:', textToSpeak)
+                      
+                      speak(textToSpeak).catch(error => {
+                        console.error('TTS播报失败:', error)
+                        toast({
+                          title: "TTS播报失败",
+                          description: error.message,
+                          variant: "destructive",
+                        })
+                      })
+                    }
+                  }}
+                  title={isPlaying ? "停止播报" : "重新播报"}
+                >
+                  {isPlaying ? (
+                    <VolumeXIcon className="w-4 h-4" />
+                  ) : (
+                    <VolumeIcon className="w-4 h-4" />
+                  )}
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -477,13 +686,32 @@ export default function HomePage() {
                                     : "bg-muted/80 text-foreground"
                               }`}
                             >
-                              <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
-                              <p className="text-xs mt-1 opacity-70">
-                                {message.timestamp.toLocaleTimeString("zh-CN", {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                              </p>
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1">
+                                  <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+                                  <p className="text-xs mt-1 opacity-70">
+                                    {message.timestamp.toLocaleTimeString("zh-CN", {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })}
+                                  </p>
+                                </div>
+                                {message.type === "assistant" && isSupported && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 w-6 p-0 opacity-70 hover:opacity-100"
+                                    onClick={() => {
+                                      speak(message.content).catch(error => {
+                                        console.warn('TTS播报失败:', error)
+                                      })
+                                    }}
+                                    title="播报此消息"
+                                  >
+                                    <VolumeIcon className="w-3 h-3" />
+                                  </Button>
+                                )}
+                              </div>
                               {message.type === "confirmation" && message.pendingAction && !message.isConfirmed && (
                             <div className="flex gap-2 mt-3 pt-3">
                               <Button
@@ -572,6 +800,13 @@ export default function HomePage() {
                                     timestamp: new Date(),
                                   }
                                   setChatMessages((prev) => [...prev, assistantMessage])
+                                  
+                                  // TTS播报取消消息
+                                  if (isSupported) {
+                                    speak("好的，已取消操作").catch(error => {
+                                      console.warn('TTS播报失败:', error)
+                                    })
+                                  }
                                 }}
                                 className="flex-1 text-xs h-7 bg-red-600 hover:bg-red-700 text-white border-red-600"
                               >
@@ -634,7 +869,9 @@ export default function HomePage() {
       <VoiceBottomSheet
         isOpen={isVoiceSheetOpen}
         onClose={handleVoiceSheetClose}
-        onCommandDetected={setCurrentCommand}
+        onCommandDetected={isConfirmationMode ? handleConfirmationCommand : setCurrentCommand}
+        isConfirmationMode={isConfirmationMode}
+        confirmationText={pendingConfirmation?.confirmationText}
       />
 
       <CommandConfirmation
