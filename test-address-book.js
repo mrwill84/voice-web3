@@ -89,3 +89,11 @@ mockLocalStorage.data = {}
 console.log("\n原始查询: 查询我的余额")
 console.log("增强查询:")
 console.log(testIntentWithAddressBook("查询我的余额"))
+
+
+
+
+
+
+
+

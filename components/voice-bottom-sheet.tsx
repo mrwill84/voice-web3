@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -58,24 +58,23 @@ export function VoiceBottomSheet({
   const [isListening, setIsListening] = useState(false)
   const [textInput, setTextInput] = useState("")
   const [transcript, setTranscript] = useState("")
+  const recognitionRef = useRef<any>(null)
 
   useEffect(() => {
     if (!isOpen) {
       setIsListening(false)
       setTextInput("")
       setTranscript("")
-    }
-  }, [isOpen])
-
-  const handleVoiceToggle = () => {
-    if (!("webkitSpeechRecognition" in window)) {
-      alert("您的浏览器不支持语音识别")
-      return
-    }
-
-    if (isListening) {
-      setIsListening(false)
-    } else {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+        recognitionRef.current = null
+      }
+    } else if (isOpen && isConfirmationMode && !isListening) {
+      // 如果是确认模式且界面打开，自动开始语音监听
+      if (!("webkitSpeechRecognition" in window)) {
+        return
+      }
+      
       setIsListening(true)
       setTranscript("")
 
@@ -83,6 +82,7 @@ export function VoiceBottomSheet({
       recognition.continuous = false
       recognition.interimResults = true
       recognition.lang = "zh-CN"
+      recognitionRef.current = recognition
 
       recognition.onresult = (event: any) => {
         const current = event.resultIndex
@@ -92,16 +92,69 @@ export function VoiceBottomSheet({
         if (event.results[current].isFinal) {
           onCommandDetected(transcript)
           setIsListening(false)
+          recognitionRef.current = null
           onClose()
         }
       }
 
       recognition.onerror = () => {
         setIsListening(false)
+        recognitionRef.current = null
       }
 
       recognition.onend = () => {
         setIsListening(false)
+        recognitionRef.current = null
+      }
+
+      recognition.start()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, isConfirmationMode])
+
+  const handleVoiceToggle = () => {
+    if (!("webkitSpeechRecognition" in window)) {
+      alert("您的浏览器不支持语音识别")
+      return
+    }
+
+    if (isListening) {
+      setIsListening(false)
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+        recognitionRef.current = null
+      }
+    } else {
+      setIsListening(true)
+      setTranscript("")
+
+      const recognition = new (window as any).webkitSpeechRecognition()
+      recognition.continuous = false
+      recognition.interimResults = true
+      recognition.lang = "zh-CN"
+      recognitionRef.current = recognition
+
+      recognition.onresult = (event: any) => {
+        const current = event.resultIndex
+        const transcript = event.results[current][0].transcript
+        setTranscript(transcript)
+
+        if (event.results[current].isFinal) {
+          onCommandDetected(transcript)
+          setIsListening(false)
+          recognitionRef.current = null
+          onClose()
+        }
+      }
+
+      recognition.onerror = () => {
+        setIsListening(false)
+        recognitionRef.current = null
+      }
+
+      recognition.onend = () => {
+        setIsListening(false)
+        recognitionRef.current = null
       }
 
       recognition.start()

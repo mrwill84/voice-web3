@@ -342,7 +342,7 @@ ${addressBookInfo}
 
   async testIntegration(integrationId: string, testData: any) {
     try {
-      const response = await api.post(`/api/v1/dev/integrations/${integrationId}/test`, {
+      const response = await api.post(`/api/v1/dev/integrations/${integrationId}/validate-and-test`, {
         test_data: testData
       })
       return response

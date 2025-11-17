@@ -105,7 +105,6 @@ const Loader2Icon = ({ className }: { className?: string }) => (
 )
 
 import { VoiceBottomSheet } from "@/components/voice-bottom-sheet"
-import { CommandConfirmation } from "@/components/command-confirmation"
 import { UnifiedExecutionCard } from "@/components/unified-execution-card"
 import { Web3Dashboard } from "@/components/web3-dashboard"
 import { InteractionHistory } from "@/components/interaction-history"
@@ -114,7 +113,7 @@ import { UserMenuDrawer } from "@/components/user-menu-drawer"
 
 interface ChatMessage {
   id: string
-  type: "user" | "assistant" | "tool_execution" | "confirmation" | "execution"
+  type: "user" | "assistant" | "tool_execution" | "confirmation" | "execution" | "waiting_confirmation"
   content: string
   timestamp: Date
   toolId?: string
@@ -127,10 +126,10 @@ interface ChatMessage {
   }
   isConfirmed?: boolean
   logs?: string[]
+  isListening?: boolean
 }
 
 export default function HomePage() {
-  const [currentCommand, setCurrentCommand] = useState<string | null>(null)
   const [isExecuting, setIsExecuting] = useState(false)
   const [executionLogs, setExecutionLogs] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState<"voice" | "dashboard" | "history">("voice")
@@ -146,6 +145,13 @@ export default function HomePage() {
     messageId: string
     sessionId: string
     confirmationText: string
+    waitingMessageId?: string
+  } | null>(null)
+  const pendingConfirmationRef = useRef<{
+    messageId: string
+    sessionId: string
+    confirmationText: string
+    waitingMessageId?: string
   } | null>(null)
 
   const { user, isAuthenticated } = useAuth()
@@ -154,6 +160,7 @@ export default function HomePage() {
   const sessionIdRef = useRef<string>(getSessionId())
   const [isProcessing, setIsProcessing] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
+  const recognitionRef = useRef<any>(null)
 
   const menuItems = [
     { id: "voice", label: "语音", icon: MicIcon },
@@ -197,232 +204,6 @@ export default function HomePage() {
   const handleVoiceCommand = () => {
     setIsVoiceSheetOpen(true)
   }
-
-  const handleConfirmationCommand = useCallback(
-    async (command: string) => {
-      if (!pendingConfirmation) return
-
-      // 解析语音命令
-      const lowerCommand = command.toLowerCase().trim()
-      let isConfirm = false
-
-      // 检查确认词汇
-      if (lowerCommand.includes('确认') || lowerCommand.includes('是的') || 
-          lowerCommand.includes('好的') || lowerCommand.includes('同意') ||
-          lowerCommand.includes('y') || lowerCommand.includes('yes') ||
-          lowerCommand.includes('ok') || lowerCommand.includes('确定')) {
-        isConfirm = true
-      } else if (lowerCommand.includes('取消') || lowerCommand.includes('不') ||
-                 lowerCommand.includes('拒绝') || lowerCommand.includes('n') ||
-                 lowerCommand.includes('no') || lowerCommand.includes('stop')) {
-        isConfirm = false
-      } else {
-        // 如果无法识别，显示提示
-        toast({
-          title: "请说确认或取消",
-          description: "请说'确认'、'是的'或'取消'、'不'",
-          variant: "destructive",
-        })
-        return
-      }
-
-      // 添加用户语音输入消息
-      const userMessage: ChatMessage = {
-        id: `user-voice-${Date.now()}`,
-        type: "user",
-        content: command,
-        timestamp: new Date(),
-      }
-      setChatMessages((prev) => [...prev, userMessage])
-
-      // 标记确认消息为已确认
-      setChatMessages((prev) => 
-        prev.map(m => 
-          m.id === pendingConfirmation.messageId 
-            ? { ...m, isConfirmed: true }
-            : m
-        )
-      )
-
-      // 创建执行消息
-      const executionMessageId = `execution-${Date.now()}`
-      const executionMessage: ChatMessage = {
-        id: executionMessageId,
-        type: "execution",
-        content: pendingConfirmation.confirmationText,
-        timestamp: new Date(),
-        executionStatus: "executing",
-        logs: [],
-      }
-      setChatMessages((prev) => [...prev, executionMessage])
-
-      // 执行确认或取消
-      const userInput = isConfirm ? "是的" : "取消"
-      await executeToolAndHandleResult(
-        pendingConfirmation.sessionId,
-        userInput,
-        executionMessageId
-      )
-
-      // 重置确认状态
-      setIsConfirmationMode(false)
-      setPendingConfirmation(null)
-      setIsVoiceSheetOpen(false)
-    },
-    [pendingConfirmation, toast],
-  )
-
-  const handleCommandWithBackend = useCallback(
-    async (command: string) => {
-      // 如果是确认模式，处理确认命令
-      if (isConfirmationMode && pendingConfirmation) {
-        await handleConfirmationCommand(command)
-        return
-      }
-      if (!isAuthenticated) {
-        toast({
-          title: "需要登录",
-          description: "请先登录以使用语音功能",
-          variant: "destructive",
-        })
-        setIsUserMenuOpen(true)
-        return
-      }
-
-      const userMessage: ChatMessage = {
-        id: `user-${Date.now()}`,
-        type: "user",
-        content: command,
-        timestamp: new Date(),
-      }
-      setChatMessages((prev) => [...prev, userMessage])
-
-      setIsProcessing(true)
-
-      try {
-        console.log("[] Sending interpret request with sessionId:", sessionIdRef.current)
-
-        const result = await apiClient.interpret(command, sessionIdRef.current, user?.id)
-
-        console.log("[] Interpret response:", result)
-
-        if (result.sessionId) {
-          sessionIdRef.current = result.sessionId
-        }
-
-        if (result.confirmationText) {
-          console.log("[] Needs user confirmation")
-          
-          let toolId = result.toolId || result.action || ""
-          let params = result.params || {}
-          
-          if (result.toolCalls && result.toolCalls.length > 0) {
-            toolId = result.toolCalls[0].tool_id
-            params = result.toolCalls[0].parameters
-          }
-          
-          const confirmMsg = result.confirmationText
-          const confirmationMessageId = `confirmation-${Date.now()}`
-
-          const confirmationMessage: ChatMessage = {
-            id: confirmationMessageId,
-            type: "confirmation",
-            content: confirmMsg,
-            timestamp: new Date(),
-            pendingAction: {
-              toolId,
-              params,
-              confirmationText: result.confirmationText,
-              sessionId: result.sessionId,
-            },
-          }
-          setChatMessages((prev) => [...prev, confirmationMessage])
-          
-          // TTS播报确认文本
-          if (isSupported) {
-            speak(confirmMsg).catch(error => {
-              console.warn('TTS播报确认文本失败:', error)
-            })
-          }
-          
-          // 设置确认模式并打开语音界面
-          setIsConfirmationMode(true)
-          setPendingConfirmation({
-            messageId: confirmationMessageId,
-            sessionId: result.sessionId || "",
-            confirmationText: result.confirmationText,
-          })
-          setIsVoiceSheetOpen(true)
-        } else if (result.toolId || result.action) {
-          setExecutingCommand(command)
-          setExecutionStatus("executing")
-          setIsExecuting(true)
-          setHasExecutionCompleted(false)
-
-          // 创建执行消息
-          const executionMessageId = `execution-${Date.now()}`
-          const executionMessage: ChatMessage = {
-            id: executionMessageId,
-            type: "execution",
-            content: command,
-            timestamp: new Date(),
-            executionStatus: "executing",
-            logs: [],
-          }
-          setChatMessages((prev) => [...prev, executionMessage])
-
-          // 根据业务场景测试用例文档，这里应该显示确认信息
-          // 然后用户确认后调用 confirm API
-          const userConfirm = confirm(result.confirmationText || "是否执行此操作？")
-          if (userConfirm) {
-            await executeToolAndHandleResult(result.sessionId || "", "是的", executionMessageId)
-          } else {
-            await executeToolAndHandleResult(result.sessionId || "", "取消", executionMessageId)
-          }
-        } else {
-          const message = result.content || result.tts_message || result.message || "已收到您的消息"
-          const assistantMessage: ChatMessage = {
-            id: `assistant-${Date.now()}`,
-            type: "assistant",
-            content: message,
-            timestamp: new Date(),
-          }
-          setChatMessages((prev) => [...prev, assistantMessage])
-          
-          // TTS播报回答
-          if (isSupported) {
-            speak(message).catch(error => {
-              console.warn('TTS播报失败:', error)
-            })
-          }
-        }
-      } catch (error: any) {
-        console.error("[] Interpret API call failed:", error)
-        toast({
-          title: "错误",
-          description: error.message || "理解指令时出错",
-          variant: "destructive",
-        })
-        const errorMessage: ChatMessage = {
-          id: `error-${Date.now()}`,
-          type: "assistant",
-          content: `错误: ${error.message || "理解指令时出错"}`,
-          timestamp: new Date(),
-        }
-        setChatMessages((prev) => [...prev, errorMessage])
-        
-        // TTS播报错误信息
-        if (isSupported) {
-          speak(`错误: ${error.message || "理解指令时出错"}`).catch(ttsError => {
-            console.warn('TTS播报失败:', ttsError)
-          })
-        }
-      } finally {
-        setIsProcessing(false)
-      }
-    },
-    [isAuthenticated, user, toast],
-  )
 
   const executeToolAndHandleResult = useCallback(
     async (sessionId: string, userInput: string, executionMessageId: string) => {
@@ -546,7 +327,368 @@ export default function HomePage() {
         }
       }
     },
-    [user],
+    [user, isSupported, speak, handleExecutionComplete],
+  )
+
+  const handleConfirmationCommand = useCallback(
+    async (command: string) => {
+      // 使用 ref 获取最新的确认数据，避免闭包问题
+      const currentConfirmation = pendingConfirmationRef.current || pendingConfirmation
+      if (!currentConfirmation) {
+        console.error("No pending confirmation found")
+        return
+      }
+
+      // 解析语音命令
+      const lowerCommand = command.toLowerCase().trim()
+      let isConfirm = false
+
+      // 检查确认词汇
+      if (lowerCommand.includes('确认') || lowerCommand.includes('是的') || 
+          lowerCommand.includes('好的') || lowerCommand.includes('同意') ||
+          lowerCommand.includes('y') || lowerCommand.includes('yes') ||
+          lowerCommand.includes('ok') || lowerCommand.includes('确定')) {
+        isConfirm = true
+      } else if (lowerCommand.includes('取消') || lowerCommand.includes('不') ||
+                 lowerCommand.includes('拒绝') || lowerCommand.includes('n') ||
+                 lowerCommand.includes('no') || lowerCommand.includes('stop')) {
+        isConfirm = false
+      } else {
+        // 如果无法识别，显示提示
+        toast({
+          title: "请说确认或取消",
+          description: "请说'确认'、'是的'或'取消'、'不'",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // 替换等待消息为"已确认"或"已取消"
+      const confirmationText = isConfirm ? "已确认" : "已取消"
+      if (currentConfirmation.waitingMessageId) {
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === currentConfirmation.waitingMessageId
+              ? {
+                  id: currentConfirmation.waitingMessageId,
+                  type: "user" as const,
+                  content: confirmationText,
+                  timestamp: new Date(),
+                }
+              : m
+          )
+        )
+      } else {
+        // 如果没有等待消息，添加新的用户消息
+        const userMessage: ChatMessage = {
+          id: `user-voice-${Date.now()}`,
+          type: "user",
+          content: confirmationText,
+          timestamp: new Date(),
+        }
+        setChatMessages((prev) => [...prev, userMessage])
+      }
+
+      // 标记确认消息为已确认
+      setChatMessages((prev) => 
+        prev.map(m => 
+          m.id === currentConfirmation.messageId 
+            ? { ...m, isConfirmed: true }
+            : m
+        )
+      )
+
+      // 创建执行消息
+      const executionMessageId = `execution-${Date.now()}`
+      const executionMessage: ChatMessage = {
+        id: executionMessageId,
+        type: "execution",
+        content: currentConfirmation.confirmationText,
+        timestamp: new Date(),
+        executionStatus: "executing",
+        logs: [],
+      }
+      setChatMessages((prev) => [...prev, executionMessage])
+
+      // 执行确认或取消
+      const userInput = isConfirm ? "是的" : "取消"
+      await executeToolAndHandleResult(
+        currentConfirmation.sessionId,
+        userInput,
+        executionMessageId
+      )
+
+      // 重置确认状态，停止语音识别
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+        recognitionRef.current = null
+      }
+      setIsConfirmationMode(false)
+      setPendingConfirmation(null)
+      pendingConfirmationRef.current = null
+    },
+    [pendingConfirmation, toast, executeToolAndHandleResult],
+  )
+
+  const handleCommandWithBackend = useCallback(
+    async (command: string) => {
+      // 如果是确认模式，处理确认命令
+      if (isConfirmationMode && pendingConfirmation) {
+        await handleConfirmationCommand(command)
+        return
+      }
+      if (!isAuthenticated) {
+        toast({
+          title: "需要登录",
+          description: "请先登录以使用语音功能",
+          variant: "destructive",
+        })
+        setIsUserMenuOpen(true)
+        return
+      }
+
+      const userMessage: ChatMessage = {
+        id: `user-${Date.now()}`,
+        type: "user",
+        content: command,
+        timestamp: new Date(),
+      }
+      setChatMessages((prev) => [...prev, userMessage])
+
+      setIsProcessing(true)
+
+      try {
+        console.log("[] Sending interpret request with sessionId:", sessionIdRef.current)
+
+        const result = await apiClient.interpret(command, sessionIdRef.current, user?.id)
+
+        console.log("[] Interpret response:", result)
+
+        if (result.sessionId) {
+          sessionIdRef.current = result.sessionId
+        }
+
+        if (result.confirmationText) {
+          console.log("[] Needs user confirmation")
+          
+          let toolId = result.toolId || result.action || ""
+          let params = result.params || {}
+          
+          if (result.toolCalls && result.toolCalls.length > 0) {
+            toolId = result.toolCalls[0].tool_id
+            params = result.toolCalls[0].parameters
+          }
+          
+          const confirmMsg = result.confirmationText
+          const confirmationMessageId = `confirmation-${Date.now()}`
+
+          const confirmationMessage: ChatMessage = {
+            id: confirmationMessageId,
+            type: "confirmation",
+            content: confirmMsg,
+            timestamp: new Date(),
+            pendingAction: {
+              toolId,
+              params,
+              confirmationText: result.confirmationText,
+              sessionId: result.sessionId,
+            },
+          }
+          setChatMessages((prev) => [...prev, confirmationMessage])
+          
+          // 添加等待用户确认的消息
+          const waitingMessageId = `waiting-${Date.now()}`
+          const waitingMessage: ChatMessage = {
+            id: waitingMessageId,
+            type: "waiting_confirmation",
+            content: "等待用户确认...",
+            timestamp: new Date(),
+            isListening: false,
+          }
+          setChatMessages((prev) => [...prev, waitingMessage])
+          
+          // 设置确认模式，不打开语音界面，直接在消息历史中显示
+          const confirmationData = {
+            messageId: confirmationMessageId,
+            sessionId: result.sessionId || "",
+            confirmationText: result.confirmationText,
+            waitingMessageId,
+          }
+          setIsConfirmationMode(true)
+          setPendingConfirmation(confirmationData)
+          pendingConfirmationRef.current = confirmationData
+          
+          // TTS播报确认文本，播报完成后再开始语音监听
+          const startVoiceRecognition = () => {
+            if ("webkitSpeechRecognition" in window) {
+              // 更新等待消息为正在语音输入
+              setChatMessages((prev) =>
+                prev.map((m) =>
+                  m.id === waitingMessageId
+                    ? { ...m, content: "正在语音输入...", isListening: true }
+                    : m
+                )
+              )
+              
+              const recognition = new (window as any).webkitSpeechRecognition()
+              recognition.continuous = false
+              recognition.interimResults = true
+              recognition.lang = "zh-CN"
+              recognitionRef.current = recognition
+
+              let isProcessing = false
+              
+              recognition.onresult = (event: any) => {
+                const current = event.resultIndex
+                const transcript = event.results[current][0].transcript
+
+                if (event.results[current].isFinal) {
+                  // 标记正在处理，避免 onend 回调覆盖
+                  isProcessing = true
+                  
+                  // 立即停止识别，避免 onend 回调干扰
+                  if (recognitionRef.current) {
+                    recognitionRef.current.stop()
+                  }
+                  
+                  // 处理确认命令，使用 ref 获取最新的确认数据
+                  const currentConfirmation = pendingConfirmationRef.current
+                  if (currentConfirmation) {
+                    handleConfirmationCommand(transcript).then(() => {
+                      recognitionRef.current = null
+                    }).catch(() => {
+                      recognitionRef.current = null
+                    })
+                  } else {
+                    console.error("No pending confirmation found")
+                    recognitionRef.current = null
+                  }
+                }
+              }
+
+              recognition.onerror = () => {
+                // 只有在没有处理确认时才重置为等待状态
+                if (!isProcessing) {
+                  setChatMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === waitingMessageId
+                        ? { ...m, content: "等待用户确认...", isListening: false }
+                        : m
+                    )
+                  )
+                }
+                recognitionRef.current = null
+              }
+
+              recognition.onend = () => {
+                // 只有在没有处理确认时才重置为等待状态
+                if (!isProcessing) {
+                  setChatMessages((prev) => {
+                    // 检查消息是否已经被更新为"已确认"或"已取消"
+                    const currentMessage = prev.find(m => m.id === waitingMessageId)
+                    if (currentMessage && (currentMessage.content === "已确认" || currentMessage.content === "已取消")) {
+                      // 消息已经被更新，不需要重置
+                      return prev
+                    }
+                    // 消息还没有被更新，重置为等待状态
+                    return prev.map((m) =>
+                      m.id === waitingMessageId
+                        ? { ...m, content: "等待用户确认...", isListening: false }
+                        : m
+                    )
+                  })
+                }
+                recognitionRef.current = null
+              }
+
+              recognition.start()
+            }
+          }
+          
+          if (isSupported) {
+            speak(confirmMsg)
+              .then(() => {
+                // TTS播报完成后，开始语音监听
+                startVoiceRecognition()
+              })
+              .catch(error => {
+                console.warn('TTS播报确认文本失败:', error)
+                // 即使TTS失败，也开始语音监听
+                startVoiceRecognition()
+              })
+          } else {
+            // 如果不支持TTS，直接开始语音监听
+            startVoiceRecognition()
+          }
+        } else if (result.toolId || result.action) {
+          setExecutingCommand(command)
+          setExecutionStatus("executing")
+          setIsExecuting(true)
+          setHasExecutionCompleted(false)
+
+          // 创建执行消息
+          const executionMessageId = `execution-${Date.now()}`
+          const executionMessage: ChatMessage = {
+            id: executionMessageId,
+            type: "execution",
+            content: command,
+            timestamp: new Date(),
+            executionStatus: "executing",
+            logs: [],
+          }
+          setChatMessages((prev) => [...prev, executionMessage])
+
+          // 根据业务场景测试用例文档，这里应该显示确认信息
+          // 然后用户确认后调用 confirm API
+          const userConfirm = confirm(result.confirmationText || "是否执行此操作？")
+          if (userConfirm) {
+            await executeToolAndHandleResult(result.sessionId || "", "是的", executionMessageId)
+          } else {
+            await executeToolAndHandleResult(result.sessionId || "", "取消", executionMessageId)
+          }
+        } else {
+          const message = result.content || result.tts_message || result.message || "已收到您的消息"
+          const assistantMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            type: "assistant",
+            content: message,
+            timestamp: new Date(),
+          }
+          setChatMessages((prev) => [...prev, assistantMessage])
+          
+          // TTS播报回答
+          if (isSupported) {
+            speak(message).catch(error => {
+              console.warn('TTS播报失败:', error)
+            })
+          }
+        }
+      } catch (error: any) {
+        console.error("[] Interpret API call failed:", error)
+        toast({
+          title: "错误",
+          description: error.message || "理解指令时出错",
+          variant: "destructive",
+        })
+        const errorMessage: ChatMessage = {
+          id: `error-${Date.now()}`,
+          type: "assistant",
+          content: `错误: ${error.message || "理解指令时出错"}`,
+          timestamp: new Date(),
+        }
+        setChatMessages((prev) => [...prev, errorMessage])
+        
+        // TTS播报错误信息
+        if (isSupported) {
+          speak(`错误: ${error.message || "理解指令时出错"}`).catch(ttsError => {
+            console.warn('TTS播报失败:', ttsError)
+          })
+        }
+      } finally {
+        setIsProcessing(false)
+      }
+    },
+    [isAuthenticated, user, toast, isConfirmationMode, pendingConfirmation, handleConfirmationCommand, isSupported, speak, executeToolAndHandleResult],
   )
 
   const handleStartExecution = (command: string) => {
@@ -557,12 +699,30 @@ export default function HomePage() {
     setIsVoiceSheetOpen(false)
     setHasShownVoiceSheet(true)
     
-    // 如果是确认模式，重置确认状态
-    if (isConfirmationMode) {
-      setIsConfirmationMode(false)
-      setPendingConfirmation(null)
+    // 如果是确认模式，更新等待消息为"等待用户确认..."
+    if (isConfirmationMode && pendingConfirmation?.waitingMessageId) {
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.id === pendingConfirmation.waitingMessageId
+            ? { ...m, content: "等待用户确认...", isListening: false }
+            : m
+        )
+      )
     }
   }
+
+  // 监听语音界面打开，更新等待消息
+  useEffect(() => {
+    if (isVoiceSheetOpen && isConfirmationMode && pendingConfirmation?.waitingMessageId) {
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.id === pendingConfirmation.waitingMessageId
+            ? { ...m, content: "正在语音输入...", isListening: true }
+            : m
+        )
+      )
+    }
+  }, [isVoiceSheetOpen, isConfirmationMode, pendingConfirmation?.waitingMessageId])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -675,20 +835,31 @@ export default function HomePage() {
                           />
                         ) : (
                           <div
-                            className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}
+                            className={`flex ${message.type === "user" || message.type === "waiting_confirmation" ? "justify-end" : "justify-start"}`}
                           >
                             <div
                               className={`max-w-[80%] rounded-2xl px-4 py-3 ${
                                 message.type === "user"
                                   ? "bg-primary text-primary-foreground"
-                                  : message.type === "confirmation"
-                                    ? "bg-muted/80 text-foreground relative"
-                                    : "bg-muted/80 text-foreground"
+                                  : message.type === "waiting_confirmation"
+                                    ? message.isListening
+                                      ? "bg-red-100 text-red-900 border border-red-300"
+                                      : "bg-primary/50 text-primary-foreground border border-dashed border-primary/50"
+                                    : message.type === "confirmation"
+                                      ? "bg-muted/80 text-foreground relative"
+                                      : "bg-muted/80 text-foreground"
                               }`}
                             >
                               <div className="flex items-start justify-between gap-2">
                                 <div className="flex-1">
-                                  <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+                                  {message.type === "waiting_confirmation" && message.isListening ? (
+                                    <div className="flex items-center gap-2">
+                                      <Loader2Icon className="w-4 h-4 animate-spin" />
+                                      <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+                                    </div>
+                                  ) : (
+                                    <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+                                  )}
                                   <p className="text-xs mt-1 opacity-70">
                                     {message.timestamp.toLocaleTimeString("zh-CN", {
                                       hour: "2-digit",
@@ -712,29 +883,49 @@ export default function HomePage() {
                                   </Button>
                                 )}
                               </div>
-                              {message.type === "confirmation" && message.pendingAction && !message.isConfirmed && (
+                              {message.type === "waiting_confirmation" && pendingConfirmation && pendingConfirmation.waitingMessageId === message.id && (
                             <div className="flex gap-2 mt-3 pt-3">
                               <Button
                                 size="sm"
                                 onClick={async () => {
-                                  // 标记确认消息为已确认，隐藏按钮
-                                  setChatMessages((prev) => 
-                                    prev.map(m => 
-                                      m.id === message.id 
-                                        ? { ...m, isConfirmed: true }
+                                  // 找到对应的确认消息并标记为已确认
+                                  setChatMessages((prev) => {
+                                    const confirmationMessage = prev.find(m => m.id === pendingConfirmation.messageId)
+                                    if (confirmationMessage) {
+                                      return prev.map(m => 
+                                        m.id === confirmationMessage.id 
+                                          ? { ...m, isConfirmed: true }
+                                          : m
+                                      )
+                                    }
+                                    return prev
+                                  })
+                                  
+                                  // 替换等待消息为"已确认"
+                                  setChatMessages((prev) =>
+                                    prev.map((m) =>
+                                      m.id === message.id
+                                        ? {
+                                            id: message.id,
+                                            type: "user" as const,
+                                            content: "已确认",
+                                            timestamp: new Date(),
+                                          }
                                         : m
                                     )
                                   )
                                   
-                                  const confirmMessage: ChatMessage = {
-                                    id: `user-confirm-${Date.now()}`,
-                                    type: "user",
-                                    content: "确认",
-                                    timestamp: new Date(),
+                                  // 重置确认状态，停止语音识别
+                                  if (recognitionRef.current) {
+                                    recognitionRef.current.stop()
+                                    recognitionRef.current = null
                                   }
-                                  setChatMessages((prev) => [...prev, confirmMessage])
+                                  setIsConfirmationMode(false)
+                                  const currentConfirmation = pendingConfirmation
+                                  setPendingConfirmation(null)
+                                  pendingConfirmationRef.current = null
                                   
-                                  setExecutingCommand(message.content)
+                                  setExecutingCommand(currentConfirmation.confirmationText)
                                   setExecutionStatus("executing")
                                   setIsExecuting(true)
                                   setHasExecutionCompleted(false)
@@ -744,29 +935,19 @@ export default function HomePage() {
                                   const executionMessage: ChatMessage = {
                                     id: executionMessageId,
                                     type: "execution",
-                                    content: message.content,
+                                    content: currentConfirmation.confirmationText,
                                     timestamp: new Date(),
                                     executionStatus: "executing",
                                     logs: [],
                                   }
                                   setChatMessages((prev) => [...prev, executionMessage])
                                   
-                                  // 根据业务场景测试用例文档，这里应该显示确认信息
-                                  // 然后用户确认后调用 confirm API
-                                  const userConfirm = confirm(message.pendingAction!.confirmationText || "是否执行此操作？")
-                                  if (userConfirm) {
-                                    await executeToolAndHandleResult(
-                                      message.pendingAction!.sessionId || "",
-                                      "是的",
-                                      executionMessageId
-                                    )
-                                  } else {
-                                    await executeToolAndHandleResult(
-                                      message.pendingAction!.sessionId || "",
-                                      "取消",
-                                      executionMessageId
-                                    )
-                                  }
+                                  // 直接执行确认操作
+                                  await executeToolAndHandleResult(
+                                    currentConfirmation.sessionId || "",
+                                    "是的",
+                                    executionMessageId
+                                  )
                                 }}
                                 className="flex-1 text-xs h-7 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white"
                               >
@@ -776,22 +957,41 @@ export default function HomePage() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => {
-                                  // 标记确认消息为已确认，隐藏按钮
-                                  setChatMessages((prev) => 
-                                    prev.map(m => 
-                                      m.id === message.id 
-                                        ? { ...m, isConfirmed: true }
+                                  // 找到对应的确认消息并标记为已确认
+                                  setChatMessages((prev) => {
+                                    const confirmationMessage = prev.find(m => m.id === pendingConfirmation.messageId)
+                                    if (confirmationMessage) {
+                                      return prev.map(m => 
+                                        m.id === confirmationMessage.id 
+                                          ? { ...m, isConfirmed: true }
+                                          : m
+                                      )
+                                    }
+                                    return prev
+                                  })
+                                  
+                                  // 替换等待消息为"已取消"
+                                  setChatMessages((prev) =>
+                                    prev.map((m) =>
+                                      m.id === message.id
+                                        ? {
+                                            id: message.id,
+                                            type: "user" as const,
+                                            content: "已取消",
+                                            timestamp: new Date(),
+                                          }
                                         : m
                                     )
                                   )
                                   
-                                  const cancelMessage: ChatMessage = {
-                                    id: `user-cancel-${Date.now()}`,
-                                    type: "user",
-                                    content: "取消",
-                                    timestamp: new Date(),
+                                  // 重置确认状态，停止语音识别
+                                  if (recognitionRef.current) {
+                                    recognitionRef.current.stop()
+                                    recognitionRef.current = null
                                   }
-                                  setChatMessages((prev) => [...prev, cancelMessage])
+                                  setIsConfirmationMode(false)
+                                  setPendingConfirmation(null)
+                                  pendingConfirmationRef.current = null
                                   
                                   const assistantMessage: ChatMessage = {
                                     id: `assistant-cancel-${Date.now()}`,
@@ -869,22 +1069,9 @@ export default function HomePage() {
       <VoiceBottomSheet
         isOpen={isVoiceSheetOpen}
         onClose={handleVoiceSheetClose}
-        onCommandDetected={isConfirmationMode ? handleConfirmationCommand : setCurrentCommand}
+        onCommandDetected={isConfirmationMode ? handleConfirmationCommand : handleCommandWithBackend}
         isConfirmationMode={isConfirmationMode}
         confirmationText={pendingConfirmation?.confirmationText}
-      />
-
-      <CommandConfirmation
-        command={currentCommand || ""}
-        isOpen={!!currentCommand}
-        onConfirm={() => {
-          if (currentCommand) {
-            handleStartExecution(currentCommand)
-          }
-        }}
-        onCancel={() => {
-          setCurrentCommand(null)
-        }}
       />
 
       <UserMenuDrawer isOpen={isUserMenuOpen} onClose={() => setIsUserMenuOpen(false)} />
