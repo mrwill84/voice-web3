@@ -385,7 +385,7 @@ ${addressBookInfo}
     try {
       const response = await api.post(`/api/v1/dev/tools/${toolId}/test/`, {
         test_data: testData,
-        timeout: timeout || 30,
+        timeout: timeout || 300,
       })
       return response
     } catch (error: any) {
@@ -399,7 +399,10 @@ ${addressBookInfo}
     timeout?: number
   }) {
     try {
-      const response = await api.post("/api/v1/dev/tools/test", toolConfiguration)
+      const response = await api.post("/api/v1/dev/tools/test", {
+        ...toolConfiguration,
+        timeout: toolConfiguration.timeout || 300,
+      })
       return response
     } catch (error: any) {
       throw new Error(error.message || "测试工具失败")
