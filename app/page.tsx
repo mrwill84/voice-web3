@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/contexts/auth-context"
 import { apiClient } from "@/lib/api-client"
-import { getSessionId } from "@/lib/session"
+import { getSessionId, generateSessionId, clearSessionId } from "@/lib/session"
 import { useToast } from "@/hooks/use-toast"
 import { useTTS } from "@/hooks/use-tts"
 
@@ -170,6 +170,27 @@ export default function HomePage() {
 
   const handleTabClick = (tabId: string) => {
     if (tabId === "voice") {
+      // 清除对话历史，创建新会话
+      setChatMessages([])
+      clearSessionId()
+      sessionIdRef.current = generateSessionId()
+      
+      // 重置相关状态
+      setIsConfirmationMode(false)
+      setPendingConfirmation(null)
+      pendingConfirmationRef.current = null
+      setIsProcessing(false)
+      setExecutingCommand(null)
+      setExecutionStatus("idle")
+      setHasExecutionCompleted(false)
+      setHasShownVoiceSheet(false)
+      
+      // 停止语音识别
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+        recognitionRef.current = null
+      }
+      
       setActiveTab("voice")
       setIsVoiceSheetOpen(true)
     } else {
