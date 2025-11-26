@@ -11,14 +11,6 @@ const nextConfig = {
   },
   trailingSlash: true,
   output: 'standalone',
-  async rewrites() {
-    return [
-      {
-        source: '/api-proxy/:path*',
-        destination: `https://xkvwqhdfaegy.sealosgzg.site/:path*`,
-      },
-    ]
-  },
 }
 
 export default nextConfig

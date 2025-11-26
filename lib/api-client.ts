@@ -55,7 +55,18 @@ api.interceptors.response.use(
         errorMsg = data?.error?.message || `请求失败，状态码: ${status}`
       }
     } else if (error.request) {
-      errorMsg = "无法连接到服务器，请检查网络连接或后端服务是否运行。"
+      // 检查错误代码，区分不同类型的网络错误
+      const errorCode = (error as any).code || (error as any).originalError?.code
+      
+      if (errorCode === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        errorMsg = `请求超时（${Math.round(api.defaults.timeout! / 1000)}秒），请稍后重试或检查网络连接`
+      } else if (errorCode === 'ECONNRESET') {
+        errorMsg = "连接被服务器重置，可能是服务器超时或网络不稳定，请稍后重试"
+      } else if (errorCode === 'ETIMEDOUT') {
+        errorMsg = "连接超时，请检查网络连接或稍后重试"
+      } else {
+        errorMsg = `无法连接到服务器: ${errorCode || error.message || "请检查网络连接或后端服务是否运行"}`
+      }
     } else {
       errorMsg = `请求设置错误: ${error.message}`
     }
