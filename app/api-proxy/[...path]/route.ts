@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const API_BASE_URL = 'https://xkvwqhdfaegy.sealosgzg.site/'
+const API_BASE_URL = 'https://xkvwqhdfaegy.sealosgzg.site'
 const TIMEOUT = 300000 // 5分钟
 
 export async function GET(
