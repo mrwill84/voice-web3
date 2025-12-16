@@ -38,11 +38,20 @@ api.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response
 
+      console.error("[API Error] 服务器响应错误:", {
+        status,
+        statusText: error.response.statusText,
+        url: error.config?.url,
+        method: error.config?.method,
+        data,
+        headers: error.response.headers,
+      })
+
       if (status === 401) {
         if (typeof window !== "undefined") {
           localStorage.removeItem("token")
         }
-        errorMsg = "身份验证失败，请重新登录"
+        errorMsg = data?.detail || data?.message || "身份验证失败，请重新登录"
       } else if (status === 405) {
         errorMsg = "请求方法不被允许，请检查API配置"
       } else if (data?.detail) {
@@ -51,12 +60,21 @@ api.interceptors.response.use(
         } else {
           errorMsg = data.detail
         }
+      } else if (data?.message) {
+        errorMsg = data.message
       } else {
         errorMsg = data?.error?.message || `请求失败，状态码: ${status}`
       }
     } else if (error.request) {
-      // 检查错误代码，区分不同类型的网络错误
       const errorCode = (error as any).code || (error as any).originalError?.code
+      
+      console.error("[API Error] 网络请求失败:", {
+        url: error.config?.url,
+        method: error.config?.method,
+        errorCode,
+        message: error.message,
+        originalError: error,
+      })
       
       if (errorCode === 'ECONNABORTED' || error.message?.includes('timeout')) {
         errorMsg = `请求超时（${Math.round(api.defaults.timeout! / 1000)}秒），请稍后重试或检查网络连接`
@@ -68,6 +86,11 @@ api.interceptors.response.use(
         errorMsg = `无法连接到服务器: ${errorCode || error.message || "请检查网络连接或后端服务是否运行"}`
       }
     } else {
+      console.error("[API Error] 请求设置错误:", {
+        message: error.message,
+        config: error.config,
+        originalError: error,
+      })
       errorMsg = `请求设置错误: ${error.message}`
     }
 
@@ -85,32 +108,43 @@ export const apiClient = {
 
   // Authentication APIs
   async login(username: string, password: string) {
-    try {
-      const form = new URLSearchParams()
-      form.append("username", username)
-      form.append("password", password)
+    const form = new URLSearchParams()
+    form.append("username", username)
+    form.append("password", password)
+    form.append('grant_type','password')
 
-      const response = await api.post("/api/v1/auth/login", form, {
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-      })
+    const error = await api.post("/api/v1/auth/login", form, {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+    }).then(
+      (response) => {
+        return {
+          success: true,
+          token: response.data.access_token || response.data.token,
+          user: response.data.user || {
+            id: response.data.user_id,
+            username: username,
+            role: response.data.role || "user",
+          },
+        }
+      },
+      (error: any) => {
+        console.error("[Login API Error] 登录请求失败:", {
+          username,
+          error: error.message,
+          originalError: error.originalError,
+          response: error.originalError?.response,
+          stack: error.originalError?.stack || new Error().stack,
+        })
+        return {
+          success: false,
+          message: error.message || "登录失败",
+        }
+      }
+    )
 
-      return {
-        success: true,
-        token: response.data.access_token || response.data.token,
-        user: response.data.user || {
-          id: response.data.user_id,
-          username: username,
-          role: response.data.role || "user",
-        },
-      }
-    } catch (error: any) {
-      return {
-        success: false,
-        message: error.message || "登录失败",
-      }
-    }
+    return error
   },
 
   async register(username: string, password: string, email: string) {

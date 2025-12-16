@@ -56,43 +56,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true)
     setError(null)
 
-    try {
-      const response = await apiClient.login(username, password)
+    const response = await apiClient.login(username, password)
 
-      if (response.success) {
-        if (typeof window !== "undefined") {
-          localStorage.setItem("token", response.token!)
-          localStorage.setItem("userRole", response.user?.role || "user")
-        }
-
-        setAuth(response.user!, response.token!, response.user?.role)
-        apiClient.setAuthToken(response.token!)
-
-        toast({
-          title: "登录成功",
-          description: `欢迎回来，${response.user?.username}！`,
-        })
-        return true
-      } else {
-        setError(response.message || "登录失败")
-        toast({
-          title: "登录失败",
-          description: response.message || "登录失败",
-          variant: "destructive",
-        })
-        return false
+    if (response.success) {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("token", response.token!)
+        localStorage.setItem("userRole", response.user?.role || "user")
       }
-    } catch (err: any) {
-      const errorMessage = err.message || "登录失败，请稍后再试"
+
+      setAuth(response.user!, response.token!, response.user?.role)
+      apiClient.setAuthToken(response.token!)
+
+      toast({
+        title: "登录成功",
+        description: `欢迎回来，${response.user?.username}！`,
+      })
+      setLoading(false)
+      return true
+    } else {
+      const errorMessage = response.message || "登录失败"
+      console.error("[Login Error] 登录失败详情:", {
+        username,
+        error: response.message,
+        fullResponse: response,
+        stack: new Error().stack,
+      })
       setError(errorMessage)
       toast({
         title: "登录失败",
         description: errorMessage,
         variant: "destructive",
       })
-      return false
-    } finally {
       setLoading(false)
+      return false
     }
   }
 
